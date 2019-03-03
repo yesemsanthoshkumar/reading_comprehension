@@ -78,7 +78,12 @@ class SlidingWindow(object):
                 for ai in [1, 2, 3, 4]:
                     score = self.sliding_window_score(rw[1], qi=qi, ai=ai)
                     if with_dist:
-                        dist = distance_based(rw[1], qi=qi, ai=a1)
+                        story = rw[1]
+                        dist = self.calculate_min_distance(
+                            passage=story['passage'],
+                            question=story['q%s' % qi],
+                            answer=story['q%s%s' % (qi, ai)]
+                        )
                         ans.append(score - dist)
                     else:
                         ans.append(score)
@@ -165,13 +170,44 @@ class SlidingWindow(object):
                 # print("Max Overlap score: ", max_overlap_score)
             if overlap_score > max_overlap_score:
                 tokens_overlapped = tokens[pi : pi + self.window_size]
-                print("Max=%f\tScore=%f\tOverlappedPassageTokens=%s\tQuestion=%s" % (
-                    max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(question_tokens)
-                ))
+                # print("Max=%f\tScore=%f\tOverlappedPassageTokens=%s\tQuestion=%s" % (
+                #     max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(question_tokens)
+                # ))
                 max_overlap_score = overlap_score
         # print("Ans: ", ai, " Max Overlap Score: ", max_overlap_score)
         return max_overlap_score
 
+    def calculate_min_distance(self, passage, question, answer):
+        ques_tokens = []
+        ans_tokens = []
+        passage_tokens = word_tokenize(passage.lower())
+
+        for q in word_tokenize(question.lower()):
+            if q in passage_tokens and q not in self.stopwords:
+                ques_tokens.append(q)
+        for a in word_tokenize(answer.lower()):
+            if a in passage_tokens and a not in self.stopwords:
+                ans_tokens.append(a)
+
+        if len(ques_tokens) == 0 or len(ans_tokens) == 0:
+            return 1
+
+        min_dist = None
+        for  qt in ques_tokens:
+            qt_pos = [i for i, x in enumerate(passage_tokens) if x == qt]
+            for atok in ans_tokens:
+                atok_pos = [i for i, x in enumerate(passage_tokens) if x == atok]
+                for qps in qt_pos:
+                    for aps in atok_pos:
+                        dist = abs(qps - aps)
+                        # print(qt, qt_pos)
+                        # print(atok, atok_pos)
+                        # print(dist, qps, aps)
+                        if min_dist is None or dist < min_dist:
+                            min_dist = dist
+                            # print("Min dist changed")
+
+        return min_dist
 
 if __name__ == "__main__":
 
@@ -234,7 +270,7 @@ if __name__ == "__main__":
 
     ques_df = pd.concat([question_dev_500, question_train_500])
     ans_df = pd.concat([answer_dev_500, answer_train_500])
-    sw_dev_train = SlidingWindow(ques_df, ans_df, window=6)
+    sw_dev_train = SlidingWindow(ques_df, ans_df, window=3)
 
     sw_dev_train.preprocess()
 
