@@ -5,13 +5,13 @@ https://www.microsoft.com/en-us/research/publication/mctest-challenge-dataset-op
 """
 
 import argparse
+import re
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-import re
-from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 
 OPTIONS = ['A', 'B', 'C', 'D']
 QUESTIONS = [1, 2, 3, 4]
@@ -25,7 +25,8 @@ QUESTION_COLUMNS = [
 ]
 ANSWER_COLUMNS = ['q1', 'q2', 'q3', 'q4']
 STOPWORDS = []
-puncts = r'[,\.(\'s)]'
+puncts = r',|\.|\'(?:s)'
+
 with open('mctest/data/stopwords.txt', 'r') as infl:
     STOPWORDS = infl.read().split('\n')
 
@@ -33,11 +34,12 @@ with open('mctest/data/stopwords.txt', 'r') as infl:
 class SlidingWindow(object):
     __options = ['A', 'B', 'C', 'D']
     stopwords = set(stopwords.words('english'))
-    # stopwords = STOPWORDS
+    stopwords = stopwords.union(set(STOPWORDS))
 
-    def __init__(self, question_df, answer_df):
+    def __init__(self, question_df, answer_df, window):
         self.question_df = question_df
         self.answer_df = answer_df
+        self.window_size = window
 
     @staticmethod
     def remove_puncts(word):
@@ -46,9 +48,9 @@ class SlidingWindow(object):
     def question_preprocess(self, question):
         prcd_question = []
         for qw in question.replace('?', '').split():
-#             if qw not in self.stopwords:
-            prcd_question.append(SlidingWindow.remove_puncts(qw))
-        # import pdb; pdb.set_trace()
+            wrd = SlidingWindow.remove_puncts(qw)
+            if len(wrd) > 2 and wrd not in self.stopwords:
+                prcd_question.append(wrd)
         return ' '.join(prcd_question)
 
     def preprocess(self):
@@ -80,7 +82,7 @@ class SlidingWindow(object):
                         ans.append(score - dist)
                     else:
                         ans.append(score)
-#                Return argmax i sw 1..4
+            #    Return argmax i sw 1..4
                 calc_option = self.__options[np.argmax(ans)]
                 ans_row.append(calc_option)
             ans_calc.append(ans_row)
@@ -123,47 +125,51 @@ class SlidingWindow(object):
             ).sum()
 
         return {
-            'One': {
-                'Total': question_single,
-                'Correct': score_single,
+            'one': {
+                'total': question_single,
+                'correct': score_single,
                 'score': score_single / question_single
             },
-            'Multiple': {
-                'Total': question_multiple,
-                'Correct': score_multiple,
+            'multiple': {
+                'total': question_multiple,
+                'correct': score_multiple,
                 'score': score_multiple / question_multiple
             }
         }
 
-    def sliding_window_score(self, story, window=3, qi=1, ai=1):
-        tokens = [SlidingWindow.remove_puncts(x) for x in story['passage'].lower().split()]
+    def sliding_window_score(self, story, qi=1, ai=1):
+        tokens = [
+            SlidingWindow.remove_puncts(x)
+            for x in story['passage'].lower().split()
+            if SlidingWindow.remove_puncts(x) not in self.stopwords
+        ]
         question_tokens = story['q%s' % qi].lower().split()
         answer_tokens = story['q%s%s' % (qi, ai)].lower().split()
 
         max_overlap_score = 0
-#         S = A U Q
+        # S = A U Q
         target_set = set(question_tokens + answer_tokens)
 
         for pi, _ in enumerate(tokens):
             overlap_score = 0
 
             try:
-                for w in range(window):
-#                     IC(P j+w) if P j+w belongs to S
+                for w in range(self.window_size):
+                    # IC(P j+w) if P j+w belongs to S
                     if tokens[pi + w] in target_set and tokens[pi + w] not in self.stopwords:
                         overlap_score += self.inv_counts[tokens[pi + w]]
             except IndexError:
                 break
 
-    #             print("Overlap score: ", overlap_score)
-    #             print("Max Overlap score: ", max_overlap_score)
+                # print("Overlap score: ", overlap_score)
+                # print("Max Overlap score: ", max_overlap_score)
             if overlap_score > max_overlap_score:
-                tokens_overlapped = tokens[pi : pi + window]
-                print("Max=%f\tScore=%f\tOverlapped=%s\tPassage=%s" % (
-                    max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(target_set)
+                tokens_overlapped = tokens[pi : pi + self.window_size]
+                print("Max=%f\tScore=%f\tOverlappedPassageTokens=%s\tQuestion=%s" % (
+                    max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(question_tokens)
                 ))
                 max_overlap_score = overlap_score
-    #     print("Ans: ", ai, " Max Overlap Score: ", max_overlap_score)
+        # print("Ans: ", ai, " Max Overlap Score: ", max_overlap_score)
         return max_overlap_score
 
 
@@ -172,7 +178,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sliding window algorithm")
     parser.add_argument(
         '--with-distance',
-        # TODO: Find the bug when the distance param is used
         dest='uses_distance',
         action='store_true',
         help='Whether sliding window should use distance metric'
@@ -202,7 +207,34 @@ if __name__ == "__main__":
 
     ques_df = pd.concat([question_dev_160, question_train_160])
     ans_df = pd.concat([answer_dev_160, answer_train_160])
-    sw_dev_train = SlidingWindow(ques_df, ans_df)
+    sw_dev_train = SlidingWindow(ques_df, ans_df, window=3)
+
+    sw_dev_train.preprocess()
+
+    dev_train_predictions = sw_dev_train.predict(with_dist=arguments.uses_distance)
+
+    score_160 = sw_dev_train.score(dev_train_predictions)
+
+    question_dev_500 = pd.read_csv("mctest/data/MCTest/mc500.dev.tsv", delimiter='\t',
+            names=QUESTION_COLUMNS
+    )
+    answer_dev_500 = pd.read_csv(
+        "mctest/data/MCTest/mc500.dev.ans",
+        delimiter='\t',
+        names=ANSWER_COLUMNS
+    )
+    question_train_500 = pd.read_csv("mctest/data/MCTest/mc500.train.tsv", delimiter='\t',
+        names=QUESTION_COLUMNS
+    )
+    answer_train_500 = pd.read_csv(
+        "mctest/data/MCTest/mc500.train.ans",
+        delimiter='\t',
+        names=ANSWER_COLUMNS
+    )
+
+    ques_df = pd.concat([question_dev_500, question_train_500])
+    ans_df = pd.concat([answer_dev_500, answer_train_500])
+    sw_dev_train = SlidingWindow(ques_df, ans_df, window=6)
 
     sw_dev_train.preprocess()
 
@@ -210,4 +242,10 @@ if __name__ == "__main__":
 
     score = sw_dev_train.score(dev_train_predictions)
 
-    print(score)
+    print("160")
+    print("one:\n\tTotal:{0} correct:{1} score:{2}".format(score_160['one']['total'], score_160['one']['correct'], score_160['one']['score']))
+    print("multiple:\n\tTotal:{0} correct:{1} score:{2}".format(score_160['multiple']['total'], score_160['multiple']['correct'], score_160['multiple']['score']))
+
+    print("500")
+    print("one:\n\tTotal:{0} correct:{1} score:{2}".format(score['one']['total'], score['one']['correct'], score['one']['score']))
+    print("multiple:\n\tTotal:{0} correct:{1} score:{2}".format(score['multiple']['total'], score['multiple']['correct'], score['multiple']['score']))
