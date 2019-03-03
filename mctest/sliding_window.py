@@ -25,7 +25,7 @@ QUESTION_COLUMNS = [
 ]
 ANSWER_COLUMNS = ['q1', 'q2', 'q3', 'q4']
 STOPWORDS = []
-puncts = ','
+puncts = r'[,\.(\'s)]'
 with open('mctest/data/stopwords.txt', 'r') as infl:
     STOPWORDS = infl.read().split('\n')
 
