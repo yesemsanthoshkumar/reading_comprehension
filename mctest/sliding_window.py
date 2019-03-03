@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import re
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 
@@ -24,7 +25,7 @@ QUESTION_COLUMNS = [
 ]
 ANSWER_COLUMNS = ['q1', 'q2', 'q3', 'q4']
 STOPWORDS = []
-
+puncts = ','
 with open('mctest/data/stopwords.txt', 'r') as infl:
     STOPWORDS = infl.read().split('\n')
 
@@ -38,11 +39,16 @@ class SlidingWindow(object):
         self.question_df = question_df
         self.answer_df = answer_df
 
+    @staticmethod
+    def remove_puncts(word):
+        return re.sub(puncts, '', word)
+
     def question_preprocess(self, question):
         prcd_question = []
         for qw in question.replace('?', '').split():
 #             if qw not in self.stopwords:
-            prcd_question.append(qw)
+            prcd_question.append(SlidingWindow.remove_puncts(qw))
+        # import pdb; pdb.set_trace()
         return ' '.join(prcd_question)
 
     def preprocess(self):
@@ -51,7 +57,7 @@ class SlidingWindow(object):
         self.word_counts = defaultdict(lambda: 0)
         for passage in self.question_df['passage']:
             for token in passage.split():
-                self.word_counts[token.lower()] += 1
+                self.word_counts[SlidingWindow.remove_puncts(token.lower())] += 1
 
         self.inv_counts = {k: np.log(1 + (1/v)) for k, v in self.word_counts.items()}
 
@@ -130,7 +136,7 @@ class SlidingWindow(object):
         }
 
     def sliding_window_score(self, story, window=3, qi=1, ai=1):
-        tokens = story['passage'].lower().split()
+        tokens = [SlidingWindow.remove_puncts(x) for x in story['passage'].lower().split()]
         question_tokens = story['q%s' % qi].lower().split()
         answer_tokens = story['q%s%s' % (qi, ai)].lower().split()
 
