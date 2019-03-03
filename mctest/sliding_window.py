@@ -10,6 +10,7 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
 
 OPTIONS = ['A', 'B', 'C', 'D']
 QUESTIONS = [1, 2, 3, 4]
@@ -29,6 +30,9 @@ with open('mctest/data/stopwords.txt', 'r') as infl:
 
 
 class SlidingWindow(object):
+    __options = ['A', 'B', 'C', 'D']
+    stopwords = set(stopwords.words('english'))
+    # stopwords = STOPWORDS
 
     def __init__(self, question_df, answer_df):
         self.question_df = question_df
@@ -37,11 +41,11 @@ class SlidingWindow(object):
     def question_preprocess(self, question):
         prcd_question = []
         for qw in question.replace('?', '').split():
-            if qw not in STOPWORDS:
-                prcd_question.append(qw)
+#             if qw not in self.stopwords:
+            prcd_question.append(qw)
         return ' '.join(prcd_question)
 
-    def fit(self):
+    def preprocess(self):
         self.question_df['passage'] = self.question_df['passage'].map(lambda x: x.replace('\\newline', ''))
 
         self.word_counts = defaultdict(lambda: 0)
@@ -66,12 +70,12 @@ class SlidingWindow(object):
                 for ai in [1, 2, 3, 4]:
                     score = self.sliding_window_score(rw[1], qi=qi, ai=ai)
                     if with_dist:
-                        dist = self.distance_based(rw[1])
+                        dist = distance_based(rw[1], qi=qi, ai=a1)
                         ans.append(score - dist)
                     else:
                         ans.append(score)
-            #    Return argmax i sw 1..4
-                calc_option = OPTIONS[np.argmax(ans)]
+#                Return argmax i sw 1..4
+                calc_option = self.__options[np.argmax(ans)]
                 ans_row.append(calc_option)
             ans_calc.append(ans_row)
 
@@ -131,7 +135,7 @@ class SlidingWindow(object):
         answer_tokens = story['q%s%s' % (qi, ai)].lower().split()
 
         max_overlap_score = 0
-        # S = A U Q
+#         S = A U Q
         target_set = set(question_tokens + answer_tokens)
 
         for pi, _ in enumerate(tokens):
@@ -139,64 +143,22 @@ class SlidingWindow(object):
 
             try:
                 for w in range(window):
-                    # IC(P j+w) if P j+w belongs to S
-                    if tokens[pi + w] in target_set and tokens[pi + w] not in STOPWORDS:
+#                     IC(P j+w) if P j+w belongs to S
+                    if tokens[pi + w] in target_set and tokens[pi + w] not in self.stopwords:
                         overlap_score += self.inv_counts[tokens[pi + w]]
             except IndexError:
                 break
 
-                # print("Overlap score: ", overlap_score)
-                # print("Max Overlap score: ", max_overlap_score)
+    #             print("Overlap score: ", overlap_score)
+    #             print("Max Overlap score: ", max_overlap_score)
             if overlap_score > max_overlap_score:
                 tokens_overlapped = tokens[pi : pi + window]
-                # print("Max=%f\tScore=%f\tOverlapped=%s\tPassage=%s" % (
-                #     max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(target_set)
-                # ))
+                print("Max=%f\tScore=%f\tOverlapped=%s\tPassage=%s" % (
+                    max_overlap_score, overlap_score, ' '.join(tokens_overlapped), ' '.join(target_set)
+                ))
                 max_overlap_score = overlap_score
-        # print("Ans: ", ai, " Max Overlap Score: ", max_overlap_score)
+    #     print("Ans: ", ai, " Max Overlap Score: ", max_overlap_score)
         return max_overlap_score
-
-    def min_distance(self, passage_words, word1, word2):
-        word1_start = np.inf
-        word2_start = np.inf
-        dist = np.inf
-        min_dist = np.inf
-        for idx, word in enumerate(passage_words):
-            if word.lower() == word1:
-                word1_start = idx
-            if word.lower() == word2:
-                word2_start = idx
-            # print("W1: ", word1, 'at', word1_start, "W2: ", word2, 'at', word2_start, "Dist: ", dist, "MinDist: ", min_dist)
-            dist = abs(word2_start - word1_start)
-            min_dist = dist if min_dist is None else min(min_dist, dist)
-        return min_dist
-
-    def distance_based(self, row):
-        passage = word_tokenize(row['passage'])
-        p_tokens = [ x.lower()
-                    for x in passage
-                    if x.lower() not in STOPWORDS
-        ]
-        for qi in QUESTIONS:
-            q_tokens = [x.lower()
-                        for x in word_tokenize(row['q%s' % qi])
-                        if x.lower not in STOPWORDS and x.lower() in p_tokens
-            ]
-            for ai in OPTIONS:
-                a_tokens = [x.lower()
-                            for x in word_tokenize(row['q%s%s' % (qi, ai)])
-                            if x.lower() not in STOPWORDS and x.lower() in p_tokens
-            ]
-                if len(q_tokens) == 0 or len(a_tokens) == 0:
-                    return 1
-                else:
-                    min_token_distance = 0
-                    for q in q_tokens:
-                        for a in a_tokens:
-                            min_dist = self.min_distance(passage, q, a)
-                        min_token_distance = min(min_token_distance, min_dist)
-                    distance_score = min_token_distance * (len(passage) - 1)
-                    return distance_score
 
 
 if __name__ == "__main__":
@@ -236,7 +198,7 @@ if __name__ == "__main__":
     ans_df = pd.concat([answer_dev_160, answer_train_160])
     sw_dev_train = SlidingWindow(ques_df, ans_df)
 
-    sw_dev_train.fit()
+    sw_dev_train.preprocess()
 
     dev_train_predictions = sw_dev_train.predict(with_dist=arguments.uses_distance)
 
